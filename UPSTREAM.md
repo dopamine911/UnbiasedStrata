@@ -154,6 +154,12 @@ Upstream's own commits, applied as patches (author kept), each exact: no change 
   parking, a park after a batch slot gave its conversation back to the main session could write the restored
   conversation's K/V into the new one's image, so a later restore answered from another conversation's history. The
   retained K/V now carries its token ids and is reused only for the prefix the parked conversation shares with it.
+- `f8019539` (Strata, 2026-10-20; new `include/strata/core/uma_cache.hpp` + `src/core/uma_cache_test.cpp`,
+  `src/program/generate.cpp`, test target in `CMakeLists.txt`): on a Linux integrated GPU (Strix Halo) the AUTO expert
+  cache is sized from at most the RAM the OS reports available less a desktop reserve (the larger of 8 GiB and 8% of
+  RAM; `STRATA_UMA_RESERVE_GIB`), because the cache copies experts into the same RAM the GPU pool reports as free and
+  could hand the engine or the desktop to the OOM killer. `--expert-cache N` is kept as asked; the APU warning uses
+  the same reserve. The `#include` hunk was applied by hand (the include list differs here).
 
 ## DeepSeek-V4.1 engine (`src/dsv41`, from Strata v0.2.4)
 
