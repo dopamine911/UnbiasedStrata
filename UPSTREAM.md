@@ -141,6 +141,15 @@ One test-only hunk since (2026-10-19, correctness checks of DeepSeek V4 Flash an
 list is over Linux's 128 KiB single-argument limit. `tools/qwen35/q36_llama_dump.cpp` (upstream's llama.cpp-side parity
 program, not part of the build) takes the same `@FILE` for `--tokens` and `--force`. Nothing on the serve path changes.
 
+### Bug fixes taken from Niko1221/Strata (branch `hip-gfx1151`, 2026-10-30)
+
+Upstream's own commits, applied as patches (author kept), each exact: no change to any computed value.
+
+- `86d10ed8` (Strata 0.2.2; `src/core/verify.cpp`, `include/strata/core/verify.hpp`): on HIP the first launch of
+  each verify window graph reads the PLE rows and raises the PLE flag before `cudaGraphLaunch`, so the launch cannot
+  wait on a GPU that is spinning on that flag (first-window hang on gfx1151, about 1 run in 5-6). Later launches keep
+  the overlapped order; CUDA unchanged. `STRATA_VERIFY_EARLY_PLE_FLAG=0/1/2` forces a mode.
+
 ## DeepSeek-V4.1 engine (`src/dsv41`, from Strata v0.2.4)
 
 Added 2026-10-24 to run DeepSeek-V4.1-Flash-1017 (ISTA-DASLab's GSQ-RCO GGUF sets) on the A6000 VM. Neither engine of
