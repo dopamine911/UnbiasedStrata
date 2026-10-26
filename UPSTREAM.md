@@ -149,6 +149,11 @@ Upstream's own commits, applied as patches (author kept), each exact: no change 
   each verify window graph reads the PLE rows and raises the PLE flag before `cudaGraphLaunch`, so the launch cannot
   wait on a GPU that is spinning on that flag (first-window hang on gfx1151, about 1 run in 5-6). Later launches keep
   the overlapped order; CUDA unchanged. `STRATA_VERIFY_EARLY_PLE_FLAG=0/1/2` forces a mode.
+- `f8ff3420` (Strata 0.2.7, upstream #1503; `include/strata/core/conversation_cache.hpp`, `src/program/generate.cpp`,
+  `sycl/src/program/generate.cpp`, test in `src/core/conversation_cache_test.cpp`): with `--batch` and conversation
+  parking, a park after a batch slot gave its conversation back to the main session could write the restored
+  conversation's K/V into the new one's image, so a later restore answered from another conversation's history. The
+  retained K/V now carries its token ids and is reused only for the prefix the parked conversation shares with it.
 
 ## DeepSeek-V4.1 engine (`src/dsv41`, from Strata v0.2.4)
 
