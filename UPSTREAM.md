@@ -5,7 +5,9 @@
 | What | Where | Version |
 | --- | --- | --- |
 | Engines (`strata`, `strata-poly`), tools, docs | https://github.com/VecSzn/PolyStrata | tag `v0.1.45-poly.1`, commit `d0cd84dc6bd009d1d9e2191e4e28cc76b80f1ee3` |
-| ggml, llama, common, mtmd, cpp-httplib | https://github.com/robertkarl/llama.cpp, branch `UnbiasedStrata`, as the submodule `third_party/llama.cpp` | commit `a6de9af3b19b5e3a5397f2c835a29a13c37664bd`: ggml-org `3cf03257f219afbe7334045ff7c6a06ac68c627d` (the commit upstream pins) plus the two parser commits below |
+| ggml, llama, common, mtmd, cpp-httplib | https://github.com/robertkarl/llama.cpp, branch `UnbiasedStrata`, as the submodule `third_party/llama.cpp` | commit `385445fad49e42fa718b5e1f71668f35b7a08559`: ggml-org `3cf03257f219afbe7334045ff7c6a06ac68c627d` (the commit upstream pins) plus the six parser commits below |
+| DeepSeek-V4.1 engine (`strata-dsv41`: `src/dsv41`, `include/strata/dsv41`, `tests/dsv41`, `tools/dsv41`, `data/dsv41`, `tools/trellis/tqenc.*`), the trellis and `iq*x_rows` CPU kernels it needs | https://github.com/Niko1221/Strata | tag `v0.2.4`, commit `96ca4383` (2026-10-24); see "DeepSeek-V4.1 engine" below |
+| llama.cpp's DeepSeek V4.1 chat template detection and DSML parser | https://github.com/ggml-org/llama.cpp pull 30817, head `b72050d0` | the `common/chat.cpp`, `common/chat.h`, `common/parsers/deepseek.cpp` hunks only, as commit `44072a1` on the submodule branch `deepseek41-parser` (on `385445f`) |
 
 Commit `0197ae86` ("Import PolyStrata v0.1.45-poly.1 (d0cd84dc) unmodified") is the upstream tree, every tracked
 file, with the same tree hash as upstream's commit. `git diff 0197ae86 HEAD` is the whole story of this fork;
@@ -88,7 +90,7 @@ Recorded here because a client written for one of the two may notice.
 
 ## Changes to llama.cpp (robertkarl/llama.cpp, branch `UnbiasedStrata`)
 
-Two commits on top of ggml-org `3cf03257`; `git -C third_party/llama.cpp diff 3cf03257 HEAD` is exactly these.
+Six commits on top of ggml-org `3cf03257`; `git -C third_party/llama.cpp diff 3cf03257 HEAD` is exactly these.
 
 - `9547d8d` (`common/parsers/qwen3-coder.cpp`): the Qwen3-Coder
   tool-call grammar accepts a call's arguments in any order. Upstream takes the required ones first and the
@@ -104,6 +106,24 @@ Two commits on top of ggml-org `3cf03257`; `git -C third_party/llama.cpp diff 3c
   "output does not match the expected peg-native format" (PLAN.md step 13, 2026-10-19, USTRAT-7). Whether every
   required argument is present is left to the tool, as upstream already leaves it for optional-only tools.
 
+- `1421694` (`tools/server/server-task.cpp`): a partial re-parse that reports fewer tool calls than the previous
+  one no longer throws (the request died with a 500 mid-stream, "Invalid diff: now finding less tool calls!"); the
+  previous message is kept, nothing is emitted for that token, and the raw generated text is logged. A non-partial
+  parse failure returns the raw text as content instead of failing the request (issue #17, 2026-10-20).
+- `638a7e2` (`common/parsers/qwen3-coder.cpp`, `tests/test-chat.cpp`): the Qwen3-Coder grammar skips a stuttered
+  `</parameter>` close tag. Qwen3.8 Flash-Next Coder IQ1_M, sampled without the grammar, wrote the tag twice before
+  `</function>` in 7 of 673 requests of a BBW run (2026-10-20); each one failed the whole call and, through the diff
+  check above, the request. The value still ends at the first close. Test in the Qwen3-Coder section of test-chat.
+- `4174b21` (`common/parsers/qwen3-coder.cpp`, `tools/server/server-task.cpp`, `tests/test-chat.cpp`): the same
+  shard also leaves a blank line between the last `</parameter>` and `</function>` (memcached-bisect-deep,
+  2026-10-21); the grammar now skips blank lines between arguments and before `</function>` and `</tool_call>`.
+  And the final, non-partial parse gets the same guard as the partial one: when it finds fewer tool calls than were
+  streamed, the streamed calls stand (arguments as last parsed) and the raw text is logged, instead of the diff
+  check throwing and the request ending in a 500 after the hold-delta guard had kept it alive. Two blank-line cases
+  in test-chat.
+- `385445f` (`common/parsers/qwen3-coder.cpp`, `tests/test-chat.cpp`): the third shape (prime-frontend, 2026-10-21):
+  `</content>` and `</invoke>` after the real `</parameter>`, a blank line, `</parameter>` again. The stuttered-close
+  rule becomes general: any close tag that is not `</function>` or `</tool_call>` is skipped between arguments.
 ## Engine source (`src/`, `include/`)
 
 No changes: `git diff 0197ae86 HEAD -- src include` is empty (checked 2026-10-18). The engines measured in step 9 are
@@ -120,6 +140,37 @@ One test-only hunk since (2026-10-19, correctness checks of DeepSeek V4 Flash an
 `--tokens`, `--eos-ids` and `--follow` accept `@FILE` (the comma-separated ids read from that file), because a 31K-id
 list is over Linux's 128 KiB single-argument limit. `tools/qwen35/q36_llama_dump.cpp` (upstream's llama.cpp-side parity
 program, not part of the build) takes the same `@FILE` for `--tokens` and `--force`. Nothing on the serve path changes.
+
+## DeepSeek-V4.1 engine (`src/dsv41`, from Strata v0.2.4)
+
+Added 2026-10-24 to run DeepSeek-V4.1-Flash-1017 (ISTA-DASLab's GSQ-RCO GGUF sets) on the A6000 VM. Neither engine of
+this fork reads a `deepseek41` GGUF (`strata-poly` knows `deepseek4`, V4 Flash), and the pinned llama.cpp predates the
+architecture, so the engine is upstream Strata's third one, `strata-dsv41` - itself a port of Project Maya's `maya-ds4`
+(MIT; `third_party/project-maya/NOTICE.md`, the vendored EXL3 / sampler / window kernels under `src/dsv41/vendor/`).
+
+- **Taken unmodified from Niko1221/Strata `v0.2.4` (96ca4383):** `src/dsv41/`, `include/strata/dsv41/`, `tests/dsv41/`,
+  `tools/dsv41/{pack_gguf,smoke,tune}.py`, `data/dsv41/` (the shipped hot-expert profiles), `tools/trellis/tqenc.{cpp,hpp}`
+  (the tests' encoder), `third_party/project-maya/`, `third_party/ggml/ggml-common-tq.h`, and upstream's `docs/DEEPSEEK41.md`
+  (rewritten for this fork afterwards). `diff -r` against the tag's tree is the check.
+- **`src/kernels/cpu` and `include/strata/kernels/cpu`:** upstream's `iq_avx2.{cpp,hpp}`, `iq_avx2_rows.inl`,
+  `iq_avx512.{cpp,hpp}` replace this fork's v0.1.45-poly.1 copies - they add the engine's CPU lane rows `iq256x_rows` /
+  `iq512x_rows` (ggml's float order, so a token's dot is ggml-cpu's bit for bit) and, upstream states, leave `iq256_*` /
+  `iq512_*` as they were (`iq_avx2_parity` is the check here) - and the trellis CPU lane `tq_cpu.{hpp,cpp}`,
+  `tq_avx2.cpp`, `tq_avx512.cpp`, `tq_states.hpp`, `tq_computed.hpp` is new in `strata_kernels_cpu`. `expert_layout.hpp`
+  stays at layout version 4: upstream's 5 only adds Hadamard-folded packs, which nothing here makes or reads.
+  `iq_avx512.cpp` is built with `-mavx512vpopcntdq -mbmi2` as upstream does (`iq512x_rows` uses them).
+- **`CMakeLists.txt`:** upstream's `strata-dsv41` block as it is, but ggml.h / ggml-cpu.h come through
+  `strata_kernels_cpu`'s `ggml-cpu` link from the submodule (no FetchContent, rule 1), and the option is turned on by the
+  `Makefile` (`STRATA_BUILD_DSV41=ON`; `strata-dsv41` is in `TARGETS`). The engine is compiled with
+  `STRATA_DSV41_TQ_CPU=1`, the ggml-cpu lane the IST-DAS sets' experts beyond VRAM run on.
+- **Not taken:** upstream's `setup.py` / `strata launch` plumbing (rules 1 and 2), the signed engine-package feed, the
+  Python server's `serve/dsml.py` (this fork's front end parses DSML with llama.cpp's `common/parsers/deepseek.cpp`,
+  below) and the fixture template `serve/fixtures/deepseek41/chat_template.jinja` (the GGUF's own template is used).
+- **Serving:** the front end starts it like the other two, `--engine strata-dsv41 -m <shard 1> ... -- --pack <pack>
+  --max-context N --dspark auto`; `--serve` is added. Its line protocol is the one `frontend/engine.hpp` speaks
+  (`READY`, `INFO`, `T`, `DONE`, `ERR`); its extra `STAT` and `NOTE` lines are ignored as `OTHER`. The front end's
+  vocabulary load falls back to the `general.architecture` override (USTRAT-6's path) because the pinned llama.cpp
+  does not know `deepseek41`.
 
 ## Removed
 

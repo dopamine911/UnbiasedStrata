@@ -3,7 +3,7 @@
 #
 #   git clone <repo> && cd <repo>
 #   git submodule update --init
-#   make build                      # build/bin/{strata,strata-poly,libstrata_kq.so,unbiased-strata}
+#   make build                      # build/bin/{strata,strata-poly,strata-dsv41,libstrata_kq.so,unbiased-strata}
 #   make test                       # the front end against a fake engine; no GPU needed
 #
 BUILD_DIR  ?= build
@@ -62,7 +62,7 @@ endif
 # capped: inside a container nproc reports the host's CPUs, not the container's quota
 JOBS       ?= $(shell n=$$(nproc 2>/dev/null || echo 4); [ $$n -gt 16 ] && n=16; echo $$n)
 # what `make build` produces; upstream's `all` also builds about 70 parity and bench programs
-TARGETS    := strata strata-poly $(KQ_TARGET) unbiased-strata
+TARGETS    := strata strata-poly strata-dsv41 $(KQ_TARGET) unbiased-strata
 
 .PHONY: build configure clean test
 
@@ -70,14 +70,14 @@ configure:
 	@test -f third_party/llama.cpp/ggml/CMakeLists.txt || \
 	  { echo "third_party/llama.cpp is empty: run 'git submodule update --init' first"; exit 1; }
 	cmake -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release $(GPU_FLAGS) -DSTRATA_NATIVE_EXPERTS=ON \
-	      -DSTRATA_MMQ_KQUANTS=ON -DSTRATA_Q6K_EXPERTS=ON -DSTRATA_BUILD_TESTS=OFF \
+	      -DSTRATA_MMQ_KQUANTS=ON -DSTRATA_Q6K_EXPERTS=ON -DSTRATA_BUILD_DSV41=ON -DSTRATA_BUILD_TESTS=OFF \
 	      $(PORTABLE_FLAG) \
 	      -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$(abspath $(BUILD_DIR))/bin \
 	      -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$(abspath $(BUILD_DIR))/bin $(CMAKE_EXTRA)
 
 build: configure
 	cmake --build $(BUILD_DIR) -j $(JOBS) --target $(TARGETS)
-	@echo "built:"; ls -1 $(BUILD_DIR)/bin/strata $(BUILD_DIR)/bin/strata-poly $(if $(KQ_TARGET),$(BUILD_DIR)/bin/libstrata_kq.so,) $(BUILD_DIR)/bin/unbiased-strata
+	@echo "built:"; ls -1 $(BUILD_DIR)/bin/strata $(BUILD_DIR)/bin/strata-poly $(BUILD_DIR)/bin/strata-dsv41 $(if $(KQ_TARGET),$(BUILD_DIR)/bin/libstrata_kq.so,) $(BUILD_DIR)/bin/unbiased-strata
 
 # The front end alone, without CUDA: for a laptop or a CI box. Needs only a C++20 compiler and CMake.
 .PHONY: frontend
