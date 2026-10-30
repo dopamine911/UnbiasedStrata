@@ -106,5 +106,18 @@ RUN --network=none ! ldd /opt/unbiased-strata/tests/* | grep 'not found'
 ENTRYPOINT []
 CMD ["strata-device", "--list-devices"]
 
+# The offline pack tools (README "Preparing a Flash-Next pack"): tools/ with numpy and regex from the same Ubuntu
+# snapshot, the submodule's gguf-py where tools/_paths.py looks for it (it imports yaml on load), and the shipped
+# expert profile (it ranks all 24,576 pairs; copy it into the pack).  CPU only, no GPU.
+#   docker build --provenance=false -f docker/hip-gfx1151.Dockerfile --target pack-tools -t unbiased-strata-pack:gfx1151 .
+#   docker run --rm --network none --user 1000:1000 -v /srv/models:/models:ro -v <out>:/out unbiased-strata-pack:gfx1151 \
+#     python3 -I /opt/unbiased-strata/tools/iq_pack.py --gguf /models/<shard 1> --out /out/<pack> --compat-bf16
+FROM base AS pack-tools
+RUN apt-get update -q && apt-get install -y -q --no-install-recommends python3-numpy python3-regex python3-yaml \
+    && rm -rf /var/lib/apt/lists/*
+COPY tools /opt/unbiased-strata/tools
+COPY third_party/llama.cpp/gguf-py /opt/unbiased-strata/third_party/llama.cpp/gguf-py
+COPY data/expert-profile.bin /opt/unbiased-strata/data/expert-profile.bin
+
 # The default target (a plain `docker build`) is the runtime image: it has to be the last stage.
 FROM runtime
