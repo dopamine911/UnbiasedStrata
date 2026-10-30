@@ -51,6 +51,19 @@ RUN --network=none test -f third_party/llama.cpp/ggml/CMakeLists.txt \
          '-DCMAKE_PREFIX_PATH=/opt/rocm;/opt/rocm/lib/rocm_sysdeps;/opt/rocm/lib/llvm' \
          '-DCMAKE_HIP_FLAGS=--rocm-path=/opt/rocm --rocm-device-lib-path=/opt/rocm/lib/llvm/amdgcn/bitcode'"
 
+# The checks to run first on a Strix Halo box (the tests image below): strata-device lists the GPUs and whether this
+# build can run them; the HIP parity tests of the prompt path (the hipBLASLt table, the exact HC down kernel, MMQ).
+# Same flags as the build stage, plus the tests, in a folder of their own.
+FROM build AS test-build
+RUN --network=none set -e; \
+    make configure BACKEND=hip HIP_ARCHS=gfx1151 ROCM_PATH=/opt/rocm PORTABLE=1 BUILD_DIR=build-tests \
+       CMAKE_EXTRA="-DSTRATA_PREFILL_MMQ=ON -DSTRATA_BUILD_TESTS=ON -DCMAKE_HIP_COMPILER_ROCM_ROOT=/opt/rocm \
+         '-DCMAKE_PREFIX_PATH=/opt/rocm;/opt/rocm/lib/rocm_sysdeps;/opt/rocm/lib/llvm' \
+         '-DCMAKE_HIP_FLAGS=--rocm-path=/opt/rocm --rocm-device-lib-path=/opt/rocm/lib/llvm/amdgcn/bitcode'"; \
+    T="strata-device hip_prefill_hcd_exact_parity hip_prefill_hipblaslt_gemm hip_prefill_mmq_parity"; \
+    cmake --build build-tests -j ${JOBS} --target $T; \
+    mkdir -p /tb; for t in $T; do cp build-tests/bin/$t /tb/; done
+
 # What the runtime image takes from the build: the three programs, the hipBLASLt table for ROCm 7.14.1, the ROCm
 # libraries ldd names (at their own paths: rocBLAS / hipBLASLt find their kernel files beside them), the rocBLAS
 # and hipBLASLt kernel folders, and blas_lib_gfx1151.kpack (the GPU code of rocBLAS, hipBLASLt and rocSOLVER; the
@@ -81,3 +94,17 @@ ENV PATH=/opt/unbiased-strata/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/
 RUN --network=none ! ldd /opt/unbiased-strata/bin/strata /opt/unbiased-strata/bin/strata-poly \
       /opt/unbiased-strata/bin/unbiased-strata | grep 'not found'
 ENTRYPOINT ["unbiased-strata"]
+
+# The runtime image plus the checks of test-build, in /opt/unbiased-strata/tests (on PATH).  Default command: list the GPUs.
+#   docker build --provenance=false -f docker/hip-gfx1151.Dockerfile --target tests -t unbiased-strata-tests:gfx1151 .
+#   docker run --rm --network none --device /dev/kfd --device /dev/dri --group-add <render gid> --group-add <video gid> \
+#     unbiased-strata-tests:gfx1151 hip_prefill_hcd_exact_parity
+FROM runtime AS tests
+COPY --from=test-build /tb/ /opt/unbiased-strata/tests/
+ENV PATH=/opt/unbiased-strata/tests:/opt/unbiased-strata/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RUN --network=none ! ldd /opt/unbiased-strata/tests/* | grep 'not found'
+ENTRYPOINT []
+CMD ["strata-device", "--list-devices"]
+
+# The default target (a plain `docker build`) is the runtime image: it has to be the last stage.
+FROM runtime
