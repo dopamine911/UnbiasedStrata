@@ -6,14 +6,14 @@
 #
 # Needs BuildKit (docker-buildx) for ADD --checksum.
 
-# Ubuntu 26.04, tag resolute-20260927
-FROM docker.io/library/ubuntu@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS base
+# Ubuntu 26.04, tag resolute-20261024.1 (the newest, pinned by digest)
+FROM docker.io/library/ubuntu@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c AS base
 ENV DEBIAN_FRONTEND=noninteractive
 # The archive as it was on this date.  The base image has no CA certificates and the snapshot server is HTTPS
 # only, so the first install (ca-certificates alone) skips the TLS check; apt still verifies every list and
 # package against the Ubuntu archive key, as it does on the base image's plain-HTTP archive.  Everything after
 # it is fetched with the TLS check on.
-ARG UBUNTU_SNAPSHOT=20261010T000000Z
+ARG UBUNTU_SNAPSHOT=20261030T000000Z
 RUN sed -i -E "s#http://(archive|security).ubuntu.com/ubuntu/#https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/#" \
         /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::https::Verify-Peer=false update -q \
@@ -86,7 +86,7 @@ RUN --network=none set -e; \
 #   (--provenance=false: without it BuildKit adds a per-build record and the image ID changes on every build)
 #   docker run --network none --device /dev/kfd --device /dev/dri --group-add <render gid> --group-add <video gid> \
 #     -v /models:/models:ro unbiased-strata:gfx1151 --engine strata -m <shard 1> ... -- <engine options>
-FROM docker.io/library/ubuntu@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS runtime
+FROM docker.io/library/ubuntu@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c AS runtime
 COPY --from=runtime-files /rt/ /
 ENV PATH=/opt/unbiased-strata/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib/rocm_sysdeps/lib:/opt/rocm/lib/llvm/lib \
