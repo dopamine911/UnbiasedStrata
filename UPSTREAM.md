@@ -126,7 +126,8 @@ Six commits on top of ggml-org `3cf03257`; `git -C third_party/llama.cpp diff 3c
   rule becomes general: any close tag that is not `</function>` or `</tool_call>` is skipped between arguments.
 ## Engine source (`src/`, `include/`)
 
-No changes: `git diff 0197ae86 HEAD -- src include` is empty (checked 2026-10-18). The engines measured in step 9 are
+No changes until 2026-10-30: `git diff 0197ae86 HEAD -- src include` was empty (checked 2026-10-18); since then the
+DeepSeek-V4.1 import (below) and three upstream bug fixes ("Bug fixes taken from Niko1221/Strata"). The engines measured in step 9 are
 these sources built in this tree; their binaries differ from upstream's build of the same sources, and the step-9
 record says so where it matters.
 
