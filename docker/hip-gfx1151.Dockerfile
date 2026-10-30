@@ -33,3 +33,20 @@ COPY --from=rocm /opt/rocm /opt/rocm
 ENV ROCM_PATH=/opt/rocm HIP_PATH=/opt/rocm HIP_PLATFORM=amd \
     PATH=/opt/rocm/bin:/opt/rocm/lib/llvm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib/rocm_sysdeps/lib:/opt/rocm/lib/llvm/lib
+
+# The engine for gfx1151, built with no network: everything it compiles is in the build context (the fork with its
+# third_party/llama.cpp submodule checked out).  The cmake flags are docs/STRIX_HALO.md section 2's:
+# STRATA_PREFILL_MMQ (the prompt experts' MMQ kernels) is not set by `make build BACKEND=hip` itself.  PORTABLE: the
+# CPU code for any AVX2 CPU, not the build machine's, as upstream's release build.
+#
+#   git submodule update --init
+#   docker build -f docker/hip-gfx1151.Dockerfile --target build -t unbiased-strata-build:gfx1151 .
+FROM toolchain AS build
+COPY . /src
+WORKDIR /src
+ARG JOBS=16
+RUN --network=none test -f third_party/llama.cpp/ggml/CMakeLists.txt \
+    && make build BACKEND=hip HIP_ARCHS=gfx1151 ROCM_PATH=/opt/rocm PORTABLE=1 JOBS=${JOBS} \
+       CMAKE_EXTRA="-DSTRATA_PREFILL_MMQ=ON -DCMAKE_HIP_COMPILER_ROCM_ROOT=/opt/rocm \
+         '-DCMAKE_PREFIX_PATH=/opt/rocm;/opt/rocm/lib/rocm_sysdeps;/opt/rocm/lib/llvm' \
+         '-DCMAKE_HIP_FLAGS=--rocm-path=/opt/rocm --rocm-device-lib-path=/opt/rocm/lib/llvm/amdgcn/bitcode'"

@@ -1,0 +1,5 @@
+# build context for docker/hip-gfx1151.Dockerfile: the sources only
+.git
+**/.git
+.codegraph
+build*/
