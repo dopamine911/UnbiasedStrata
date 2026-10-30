@@ -1,5 +1,7 @@
-# build context for docker/hip-gfx1151.Dockerfile: the sources only
+# build context for docker/hip-gfx1151.Dockerfile: the sources only.  docker/ is left out too, so an edit to
+# this Dockerfile does not rebuild the engine (COPY . would see it).
 .git
 **/.git
 .codegraph
 build*/
+docker/

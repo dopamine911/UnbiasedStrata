@@ -50,3 +50,34 @@ RUN --network=none test -f third_party/llama.cpp/ggml/CMakeLists.txt \
        CMAKE_EXTRA="-DSTRATA_PREFILL_MMQ=ON -DCMAKE_HIP_COMPILER_ROCM_ROOT=/opt/rocm \
          '-DCMAKE_PREFIX_PATH=/opt/rocm;/opt/rocm/lib/rocm_sysdeps;/opt/rocm/lib/llvm' \
          '-DCMAKE_HIP_FLAGS=--rocm-path=/opt/rocm --rocm-device-lib-path=/opt/rocm/lib/llvm/amdgcn/bitcode'"
+
+# What the runtime image takes from the build: the three programs, the hipBLASLt table for ROCm 7.14.1, the ROCm
+# libraries ldd names (at their own paths: rocBLAS / hipBLASLt find their kernel files beside them), the rocBLAS
+# and hipBLASLt kernel folders, and blas_lib_gfx1151.kpack (the GPU code of rocBLAS, hipBLASLt and rocSOLVER; the
+# other TheRock archives - fft, hiptensor, rand, rccl, rocalution - belong to libraries nothing here links).
+FROM build AS runtime-files
+RUN --network=none set -e; \
+    B=/rt/opt/unbiased-strata; mkdir -p $B/bin $B/share /rt/opt/rocm/.kpack; \
+    cp build/bin/strata build/bin/strata-poly build/bin/unbiased-strata $B/bin/; \
+    cp tools/hip/gfx1151-hipblaslt-100401.txt $B/share/; \
+    for l in $(ldd build/bin/strata build/bin/strata-poly build/bin/unbiased-strata \
+               | awk '$3 ~ /^\/opt\/rocm\// {print $3}' | sort -u); do \
+      mkdir -p /rt$(dirname $l); cp -L $l /rt$(dirname $l)/; done; \
+    cp -a /opt/rocm/lib/rocblas /opt/rocm/lib/hipblaslt /rt/opt/rocm/lib/; \
+    cp /opt/rocm/.kpack/blas_lib_gfx1151.kpack /rt/opt/rocm/.kpack/
+
+# The runtime image: the plain base (no compiler, no apt packages) and the files above.  It needs no network.
+# GPU access: --device /dev/kfd --device /dev/dri and the host's render / video groups (--group-add).
+#
+#   docker build --provenance=false -f docker/hip-gfx1151.Dockerfile -t unbiased-strata:gfx1151 .
+#   (--provenance=false: without it BuildKit adds a per-build record and the image ID changes on every build)
+#   docker run --network none --device /dev/kfd --device /dev/dri --group-add <render gid> --group-add <video gid> \
+#     -v /models:/models:ro unbiased-strata:gfx1151 --engine strata -m <shard 1> ... -- <engine options>
+FROM docker.io/library/ubuntu@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS runtime
+COPY --from=runtime-files /rt/ /
+ENV PATH=/opt/unbiased-strata/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib/rocm_sysdeps/lib:/opt/rocm/lib/llvm/lib \
+    STRATA_HIPBLASLT_TUNING=/opt/unbiased-strata/share/gfx1151-hipblaslt-100401.txt
+RUN --network=none ! ldd /opt/unbiased-strata/bin/strata /opt/unbiased-strata/bin/strata-poly \
+      /opt/unbiased-strata/bin/unbiased-strata | grep 'not found'
+ENTRYPOINT ["unbiased-strata"]
