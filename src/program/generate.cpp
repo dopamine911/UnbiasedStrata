@@ -30,6 +30,7 @@
 #include "strata/core/expert_source.hpp"
 #include "strata/core/foresight_swap.hpp"
 #include "strata/core/pinned.hpp"
+#include "strata/core/uma_cache.hpp"
 #include "strata/core/remote_experts.hpp"
 #include "strata/core/on_device.hpp"
 #include "strata/core/peer_experts.hpp"
@@ -5695,6 +5696,32 @@ int main(int argc, char** argv) {
             (void) cudaGetLastError();
             free_b = strata::core::device_free_bytes();
         }
+#if defined(STRATA_USE_HIP) && !defined(_WIN32)
+        {   // An integrated GPU's "free VRAM" is system RAM (the BIOS carve-out plus the GTT pool, nearly all of the RAM when the kernel was told
+            // ttm.pages_limit), and the cache copies experts into that same RAM on top of the arena: sized from the pool alone it can ask for
+            // more than the OS has left, and the OOM killer takes the engine or the desktop.  So the AUTO size counts that RAM once: the
+            // cache gets at most what the OS reports available less a reserve for the desktop (include/strata/core/uma_cache.hpp).
+            // A recommendation: --expert-cache N is kept as asked, STRATA_UMA_RESERVE_GIB=0 gives the old sizing.
+            cudaDeviceProp up{};
+            int ud = 0;
+            strata::core::detail::HostMemory uh{};
+            if (cudaGetDevice(&ud) == cudaSuccess && cudaGetDeviceProperties(&up, ud) == cudaSuccess && up.integrated &&
+                strata::core::detail::host_available_memory(uh)) {
+                const uint64_t reserve = strata::core::uma_desktop_reserve_bytes(strata::platform::total_physical_memory());
+                const uint64_t room = strata::core::uma_cache_room_bytes((uint64_t) uh.available, reserve);
+                if (reserve > 0 && room < (uint64_t) free_b) {
+                    std::fprintf(stderr, "strata generate: expert cache auto: this GPU shares system RAM: %.2f GiB free on the GPU, but the OS has "
+                                         "%.2f GiB available; %.2f GiB stay for the desktop, so the cache is sized from %.2f GiB "
+                                         "(STRATA_UMA_RESERVE_GIB changes the reserve, --expert-cache N sets the cache)\n",
+                                 (double) free_b / 1073741824.0, (double) uh.available / 1073741824.0,
+                                 (double) reserve / 1073741824.0, (double) room / 1073741824.0);
+                    free_b = (size_t) room;
+                }
+            } else {
+                (void) cudaGetLastError();
+            }
+        }
+#endif
         // Plan v0.3 P5: the batched prompt path's chunk buffers are allocated later, so they are reserved here -
         // under WDDM an over-subscribed allocation does not fail, it pages to system memory and crawls.
         // (with borrowing - the default with a profile - the prompt path lends cache slots instead; `pf_borrow` is
@@ -5749,7 +5776,7 @@ int main(int argc, char** argv) {
             strata::core::detail::HostMemory hm{};
             if (cudaGetDevice(&apu_dev) == cudaSuccess && cudaGetDeviceProperties(&apu_prop, apu_dev) == cudaSuccess &&
                 apu_prop.integrated && strata::core::detail::host_available_memory(hm)) {
-                const int64_t host_headroom = 4ll << 30;   // the OS and request-time CPU work
+                const int64_t host_headroom = (int64_t) strata::core::uma_desktop_reserve_bytes(strata::platform::total_physical_memory());   // the OS, the desktop and request-time CPU work
                 const int64_t cache_b = (int64_t) o.expert_cache * blob;
                 if (cache_b > (int64_t) hm.available - host_headroom)
                     std::fprintf(stderr, "strata generate: WARNING: this GPU shares system RAM, and the cache above (%.2f GiB) is "
@@ -8903,7 +8930,12 @@ int main(int argc, char** argv) {
                 ~MergeBack() { if (on && !strata::core::conversation_checkpoints_merge(std::move(cs), checks)) checks.clear(); }
             } merge_back{cs, checks, n_st > 0};
             const strata::core::ConversationView view{live, live_imgs, n_st > 0 ? cs.stage0 : checks, cvec_cached};
-            auto reuse = conversations.take_reuse();
+            const int64_t retained_n = conversations.retained_tokens();
+            auto reuse = conversations.take_reuse_for(live);   // never another conversation's K/V
+            if (retained_n > 0 && reuse.unchanged_tokens < retained_n)
+                std::fprintf(stderr, "strata serve: conversation cache: retained K/V reused for %lld of its %lld tokens "
+                                     "(the rest is not this conversation's)\n", (long long) reuse.unchanged_tokens,
+                             (long long) retained_n);
             std::vector<strata::core::ConversationKvReuse> stage_reuse = std::move(reuse.stages);
             stage_reuse.resize(n_st);
             reuse.stages.clear();
@@ -10823,6 +10855,8 @@ int main(int argc, char** argv) {
         // conversation an idle slot holds reads on from there.  Every stage, the same calls.
         // `at`: one of the slot's checkpoints - only the K/V up to it is copied and its state restored instead
         auto copy_from_slot = [&](int b, const ConvCheckpoint* at, std::string& e) -> bool {
+            // the main session's K/V is replaced by the slot's: K/V retained from a restore described the old one
+            conversations.take_reuse();
             const int64_t upto = at != nullptr ? (int64_t) at->ids.size() : (int64_t) bs[(size_t) b].ids.size();
             if (at != nullptr && at->stage_parts.size() != stages.size()) { e = "a checkpoint without its stage parts"; return false; }
             if (slot_copy_direct && at == nullptr) {
@@ -12239,7 +12273,7 @@ int main(int argc, char** argv) {
                 if (std::getenv("STRATA_SNAPSHOT_FULL_CAPTURE") == nullptr) {
                     std::vector<std::vector<strata::core::ConversationKv>> stage_kv;   // every stage's, for its next park
                     for (auto& si : incoming->stage_images) stage_kv.push_back(std::move(si.kv));
-                    conversations.retain(std::move(incoming->kv), int64_t(live.size()), std::move(stage_kv));
+                    conversations.retain(std::move(incoming->kv), int64_t(live.size()), std::move(stage_kv), live);
                 }
                 incoming.reset(); // Running-state/checkpoint copies are no longer needed.
                 lent_slot = -1;   // (the main session holds the parked conversation now)

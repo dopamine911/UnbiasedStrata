@@ -126,7 +126,8 @@ Six commits on top of ggml-org `3cf03257`; `git -C third_party/llama.cpp diff 3c
   rule becomes general: any close tag that is not `</function>` or `</tool_call>` is skipped between arguments.
 ## Engine source (`src/`, `include/`)
 
-No changes: `git diff 0197ae86 HEAD -- src include` is empty (checked 2026-10-18). The engines measured in step 9 are
+No changes until 2026-10-30: `git diff 0197ae86 HEAD -- src include` was empty (checked 2026-10-18); since then the
+DeepSeek-V4.1 import (below) and three upstream bug fixes ("Bug fixes taken from Niko1221/Strata"). The engines measured in step 9 are
 these sources built in this tree; their binaries differ from upstream's build of the same sources, and the step-9
 record says so where it matters.
 
@@ -140,6 +141,26 @@ One test-only hunk since (2026-10-19, correctness checks of DeepSeek V4 Flash an
 `--tokens`, `--eos-ids` and `--follow` accept `@FILE` (the comma-separated ids read from that file), because a 31K-id
 list is over Linux's 128 KiB single-argument limit. `tools/qwen35/q36_llama_dump.cpp` (upstream's llama.cpp-side parity
 program, not part of the build) takes the same `@FILE` for `--tokens` and `--force`. Nothing on the serve path changes.
+
+### Bug fixes taken from Niko1221/Strata (branch `hip-gfx1151`, 2026-10-30)
+
+Upstream's own commits, applied as patches (author kept), each exact: no change to any computed value.
+
+- `86d10ed8` (Strata 0.2.2; `src/core/verify.cpp`, `include/strata/core/verify.hpp`): on HIP the first launch of
+  each verify window graph reads the PLE rows and raises the PLE flag before `cudaGraphLaunch`, so the launch cannot
+  wait on a GPU that is spinning on that flag (first-window hang on gfx1151, about 1 run in 5-6). Later launches keep
+  the overlapped order; CUDA unchanged. `STRATA_VERIFY_EARLY_PLE_FLAG=0/1/2` forces a mode.
+- `f8ff3420` (Strata 0.2.7, upstream #1503; `include/strata/core/conversation_cache.hpp`, `src/program/generate.cpp`,
+  `sycl/src/program/generate.cpp`, test in `src/core/conversation_cache_test.cpp`): with `--batch` and conversation
+  parking, a park after a batch slot gave its conversation back to the main session could write the restored
+  conversation's K/V into the new one's image, so a later restore answered from another conversation's history. The
+  retained K/V now carries its token ids and is reused only for the prefix the parked conversation shares with it.
+- `f8019539` (Strata, 2026-10-20; new `include/strata/core/uma_cache.hpp` + `src/core/uma_cache_test.cpp`,
+  `src/program/generate.cpp`, test target in `CMakeLists.txt`): on a Linux integrated GPU (Strix Halo) the AUTO expert
+  cache is sized from at most the RAM the OS reports available less a desktop reserve (the larger of 8 GiB and 8% of
+  RAM; `STRATA_UMA_RESERVE_GIB`), because the cache copies experts into the same RAM the GPU pool reports as free and
+  could hand the engine or the desktop to the OOM killer. `--expert-cache N` is kept as asked; the APU warning uses
+  the same reserve. The `#include` hunk was applied by hand (the include list differs here).
 
 ## DeepSeek-V4.1 engine (`src/dsv41`, from Strata v0.2.4)
 
