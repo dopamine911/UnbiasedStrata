@@ -789,6 +789,16 @@ Shipped tables:
   valid: the engine falls back to hipBLASEx for an id the library rejects, and the test still passes. Run it with
   `STRATA_HIPBLASLT_VERBOSE=1` and look for `fallbacks=0` in its summary line, and recalibrate with
   `tune_hipblaslt` before using this table with a different 1.5.0 build.
+- `gfx1151-hipblaslt-100401-rocm10.1.0.txt`: Radeon 8060S (Ryzen AI Max+ 395, gfx1151, 128 GB; Ubuntu 26.04), calibrated
+  for ROCm 10.1.0 from AMD's Ubuntu 26.04 packages (`amdrocm-core-dev10.1-gfx1151` 10.1.0-3; `docker/hip-gfx1151.Dockerfile`
+  uses it). Its hipBLASLt reports 1.4.1 (100401), the same number as ROCm 7.14.1's, but it is another build (39d8d603) that
+  numbers its solutions differently: with `gfx1151-hipblaslt-100401.txt` the table sends the hyper-connection down
+  projection to a solution this library does not have, a 32K-token prompt read at 356 tok/s through the fallbacks
+  (full ROCm) or ended the engine on a rocBLAS fallback error (the slim runtime image). Calibrated with
+  `tune_hipblaslt --workspace-mib 32` and that table's 90 cases (same geometries, 156 s): a 32K-token prompt reads at
+  818.9 tok/s, decode unchanged (Qwen3.8-Flash-Next UD-IQ4_XS, 2026-10-30). `STRATA_HCD_EXACT` declines with it (its
+  kernel reproduces 7.14.1's solutions 1176 / 1177) and hipBLASLt runs that GEMM, so `hip_prefill_hcd_exact_parity`
+  skips (77). The version check cannot tell the two builds apart: use the file that matches the installed ROCm.
 - `gfx1151-hipblaslt-100400.txt`: Radeon 8060S (Ryzen AI Max+ 395, gfx1151, 128 GB; Fedora 44, kernel 7.2.8),
   calibrated with the ROCm 7.14.0a20260608 wheels that setup installs for gfx1151 since 0.1.40.2 (#1267): their
   hipBLASLt is 1.4.0 (version number 100400), so neither `gfx1151-hipblaslt-100401.txt` nor `-100500.txt` applied and

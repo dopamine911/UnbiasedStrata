@@ -62,7 +62,8 @@ RUN --network=none test -f third_party/llama.cpp/ggml/CMakeLists.txt \
          '-DCMAKE_HIP_FLAGS=--rocm-path=/opt/rocm --rocm-device-lib-path=/opt/rocm/lib/llvm/amdgcn/bitcode'"
 
 # The checks to run first on a Strix Halo box (the tests image below): strata-device lists the GPUs and whether this
-# build can run them; the HIP parity tests of the prompt path (the hipBLASLt table, the exact HC down kernel, MMQ).
+# build can run them; the HIP parity tests of the prompt path (the hipBLASLt table, the exact HC down kernel, MMQ); and
+# tools/hip/tune_hipblaslt, which recalibrates the hipBLASLt table for the ROCm in this image (docs/AMD_HIP.md).
 # Same flags as the build stage, plus the tests, in a folder of their own.
 FROM build AS test-build
 RUN --network=none set -e; \
@@ -70,18 +71,19 @@ RUN --network=none set -e; \
        CMAKE_EXTRA="-DSTRATA_PREFILL_MMQ=ON -DSTRATA_BUILD_TESTS=ON -DCMAKE_HIP_COMPILER_ROCM_ROOT=/opt/rocm \
          '-DCMAKE_PREFIX_PATH=/opt/rocm;/opt/rocm/lib/rocm_sysdeps;/opt/rocm/lib/llvm' \
          '-DCMAKE_HIP_FLAGS=--rocm-path=/opt/rocm --rocm-device-lib-path=/opt/rocm/lib/llvm/amdgcn/bitcode'"; \
-    T="strata-device hip_prefill_hcd_exact_parity hip_prefill_hipblaslt_gemm hip_prefill_mmq_parity"; \
+    T="strata-device hip_prefill_hcd_exact_parity hip_prefill_hipblaslt_gemm hip_prefill_mmq_parity tune_hipblaslt"; \
     cmake --build build-tests -j ${JOBS} --target $T; \
     mkdir -p /tb; for t in $T; do cp build-tests/bin/$t /tb/; done
 
-# What the runtime image takes from the build: the three programs, the hipBLASLt 100401 table (ROCm 10.1), the ROCm
+# What the runtime image takes from the build: the three programs, the hipBLASLt table calibrated for ROCm 10.1.0's
+# hipBLASLt (tools/hip/gfx1151-hipblaslt-100401-rocm10.1.0.txt: same version number as 7.14.1's, other solution ids), the ROCm
 # libraries ldd names (at their own paths: rocBLAS / hipBLASLt find their kernel files beside them), the rocBLAS
 # and hipBLASLt kernel folders (ROCm 10.1's packages keep their GPU code there, gfx1151 only; no .kpack archive).
 FROM build AS runtime-files
 RUN --network=none set -e; \
     B=/rt/opt/unbiased-strata; mkdir -p $B/bin $B/share /rt/opt/rocm/lib; \
     cp build/bin/strata build/bin/strata-poly build/bin/unbiased-strata $B/bin/; \
-    cp tools/hip/gfx1151-hipblaslt-100401.txt $B/share/; \
+    cp tools/hip/gfx1151-hipblaslt-100401-rocm10.1.0.txt $B/share/; \
     for l in $(ldd build/bin/strata build/bin/strata-poly build/bin/unbiased-strata \
                | awk '$3 ~ /^\/opt\/rocm\// {print $3}' | sort -u); do \
       mkdir -p /rt$(dirname $l); cp -L $l /rt$(dirname $l)/; done; \
@@ -98,7 +100,7 @@ FROM docker.io/library/ubuntu@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25
 COPY --from=runtime-files /rt/ /
 ENV PATH=/opt/unbiased-strata/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib/rocm_sysdeps/lib:/opt/rocm/lib/llvm/lib \
-    STRATA_HIPBLASLT_TUNING=/opt/unbiased-strata/share/gfx1151-hipblaslt-100401.txt
+    STRATA_HIPBLASLT_TUNING=/opt/unbiased-strata/share/gfx1151-hipblaslt-100401-rocm10.1.0.txt
 RUN --network=none ! ldd /opt/unbiased-strata/bin/strata /opt/unbiased-strata/bin/strata-poly \
       /opt/unbiased-strata/bin/unbiased-strata | grep 'not found'
 ENTRYPOINT ["unbiased-strata"]
