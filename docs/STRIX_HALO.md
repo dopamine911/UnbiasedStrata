@@ -20,6 +20,8 @@ What the engine does differently on this chip:
 - **The hipBLASLt table** `tools/hip/gfx1151-hipblaslt-100401.txt` (ROCm 7.14.1's hipBLASLt 1.x `100401`), including the prompt shapes
   at `--prefill 16384` (T 16383 / 16384). Setup's own ROCm for gfx1151 (the 7.14.0a20260608 wheels, hipBLASLt 1.4.0) takes
   `tools/hip/gfx1151-hipblaslt-100400.txt`: the same shapes, calibrated against that library (docs/AMD_HIP.md, Tuning table).
+  ROCm 10.1.0's packages also report hipBLASLt `100401` but number their solutions differently: they take
+  `tools/hip/gfx1151-hipblaslt-100401-rocm10.1.0.txt` (the container below uses it).
 - **The expert cache and the RAM budget share the RAM.** For a model with a RAM budget (UD-IQ4_XS, UD-Q4_K_XL) setup writes a number for `--expert-cache` (the RAM less 24 GB less the budget), not `auto`: `auto` counts all the memory the OS can give back at start, and with a 55 GiB budget and a desktop open it took the room the OS needed (#1715, a global OOM on a 128 GB box). The number is in the config's `args`; `--expert-cache N` there sets it. An engine run by hand should pass one too.
 
 ## 1. The toolchain (no root needed)
@@ -45,6 +47,27 @@ The kernel's amdgpu driver and `/dev/kfd` access (your user in the `render` and 
 To let the GPU use most of a 128 GB machine the maintainers' box boots with `ttm.pages_limit=29360128 ttm.page_pool_size=29360128`
 (a 112 GiB GTT; the default is about half of the RAM) and `amd_iommu=off`; both are host settings the engine does not need to run,
 only to have the room.
+
+## 1b. Or in a container (`docker/hip-gfx1151.Dockerfile`)
+
+The same build in Docker (BuildKit, `docker-buildx`), with nothing fetched while compiling: Ubuntu 26.04 by digest, its
+packages from one dated snapshot, and ROCm 10.1.0 from AMD's signed Ubuntu 26.04 repository (`amdrocm-core-dev10.1-gfx1151`
+pinned to `10.1.0-3`, the signing key pinned by sha256). It sets `STRATA_PREFILL_MMQ=ON` and `PORTABLE=1` and ships the
+hipBLASLt table calibrated for that ROCm.
+
+```sh
+git submodule update --init
+docker build --provenance=false -f docker/hip-gfx1151.Dockerfile -t unbiased-strata:gfx1151 .                  # runtime, ~1.1 GB
+docker build --provenance=false -f docker/hip-gfx1151.Dockerfile --target tests -t unbiased-strata-tests:gfx1151 .
+docker build --provenance=false -f docker/hip-gfx1151.Dockerfile --target pack-tools -t unbiased-strata-pack:gfx1151 .
+```
+
+The tests image adds `strata-device`, the HIP prompt parity tests and `tune_hipblaslt`. First checks on the box, as a normal
+user with the GPU groups: `strata-device --list-devices`, then `STRATA_HIPBLASLT_VERBOSE=1 hip_prefill_hipblaslt_gemm` must
+report `fallbacks=0`. A table made for another hipBLASLt build with the same version number loads without complaint but falls
+back: on a 32K-token prompt 356 tok/s instead of 819, or the engine ends on a rocBLAS fallback error. Recalibrate with
+`tune_hipblaslt` (docs/AMD_HIP.md, Tuning table) when the ROCm changes. `hip_prefill_hcd_exact_parity` skips (77) with the
+10.1.0 table: the exact HC down kernel reproduces 7.14.1's solutions only, and hipBLASLt runs that GEMM.
 
 ## 2. The engine
 
